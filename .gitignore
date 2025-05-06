@@ -1,0 +1,31 @@
+# Git Ignore Rules for RSU/ESOP Platform
+
+# Node / Dependency Directories
+node_modules/
+
+# Build output
+dist/
+
+# Environment variables
+.env*
+!.env.example
+
+# Log files
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Editor / OS files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# Docker
+!docker-compose.yml # Keep compose file
+!Dockerfile # Keep Dockerfiles if committed
+docker-sync.yml # Example
+
+# Database Data (if mapped locally, usually handled by volumes)
+# postgres_data/ 

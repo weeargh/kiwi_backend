@@ -1,0 +1,69 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine # Match spec version
+    container_name: rsu_postgres
+    environment:
+      POSTGRES_USER: ${DB_USER:-user}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-password}
+      POSTGRES_DB: ${DB_NAME:-rsu_db}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    networks:
+      - rsu_network
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: rsu_backend
+    environment:
+      # Pass database connection details (use service name 'postgres')
+      DATABASE_URL: postgresql://${DB_USER:-user}:${DB_PASSWORD:-password}@postgres:${DB_PORT:-5432}/${DB_NAME:-rsu_db}
+      BACKEND_PORT: ${BACKEND_PORT:-3001}
+      # Add JWT_SECRET later
+      # JWT_SECRET: ${JWT_SECRET:-YourSecretKey}
+    volumes:
+      # Mount source code for development (optional, allows hot-reloading)
+      - ./backend:/usr/src/app/backend
+      - /usr/src/app/backend/node_modules # Avoid overwriting node_modules
+    ports:
+      - "${BACKEND_PORT:-3001}:3001"
+    depends_on:
+      - postgres
+    networks:
+      - rsu_network
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: rsu_frontend
+    ports:
+      - "${FRONTEND_PORT:-8080}:80" # Map host port 8080 to container port 80 (nginx default)
+    depends_on:
+      - backend
+    networks:
+      - rsu_network
+    restart: unless-stopped
+    # For development with hot-reloading (alternative setup):
+    # Instead of building and serving with nginx, mount code and run dev server
+    # command: npm run dev
+    # volumes:
+    #   - ./frontend:/usr/src/app/frontend
+    #   - /usr/src/app/frontend/node_modules
+    # ports:
+    #   - "${FRONTEND_PORT:-8080}:5173" # Vite default port
+
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  rsu_network:
+    driver: bridge 
