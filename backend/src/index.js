@@ -38,9 +38,14 @@ pool.connect((err, client, release) => {
 
 // CORS Middleware - BEFORE any routes
 // Frontend URL from .env or default to common dev port for rsu_frontend service
-const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:8080'; 
+// Allow both deployed frontend and localhost for CORS
+const allowedOrigins = [
+  'https://kiwi-frontend-4e5u.onrender.com', // Deployed frontend
+  'http://localhost:8080' // Local development
+];
 app.use(cors({
-  origin: frontendUrl,
+  origin: allowedOrigins,
+
   credentials: true, // Important for cookies/auth headers in future, and for some Auth0 flows
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"], // Explicitly allow standard methods
   allowedHeaders: [
