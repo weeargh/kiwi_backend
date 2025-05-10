@@ -3,7 +3,8 @@ import axios from 'axios';
 import { auth0 } from '../main'; // Import the auth0 instance from main.js
 
 // Update to consistently use port 3001 for the backend API
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001/api';
+// Use environment variable for backend API URL; fallback is for local dev only
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ? (import.meta.env.VITE_API_BASE_URL + '/api') : 'http://localhost:3001/api';
 
 // Create an Axios instance
 const apiClient = axios.create({

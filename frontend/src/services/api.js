@@ -2,8 +2,8 @@
 import axios from 'axios';
 import { auth0 } from '../main';
 
-// Always use localhost:3001 for backend API consistency
-const API_BASE_URL = 'http://localhost:3001/api';
+// Use environment variable for backend API URL
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL + '/api';
 
 // Create a new axios instance with custom config
 const apiClient = axios.create({
