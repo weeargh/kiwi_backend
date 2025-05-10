@@ -4,7 +4,9 @@ FROM node:18-alpine as build-stage
 WORKDIR /usr/src/app/frontend
 
 COPY package*.json ./
-RUN npm install
+
+# Clean install: Remove node_modules and lock file if they exist, then install
+RUN rm -rf node_modules package-lock.json && npm install
 
 COPY . .
 

@@ -171,11 +171,11 @@ CREATE INDEX idx_pps_lookup ON pps_history(tenant_id, effective_date, created_at
 | --- | --- | --- |
 | user_id | UUID | PK |
 | tenant_id | UUID | FK → Tenant |
+| auth0_user_id | VARCHAR(128) | nullable. Auth0 User ID (subject claim). Unique per tenant when not null (see unique constraint in migration) |
 | email | VARCHAR(255) | unique* per tenant |
 | name | VARCHAR(100) |  |
 | role | ENUM('admin','employee') |  |
 | status | ENUM('active','inactive') |  |
-| password_hash | TEXT | bcrypt |
 | created_at | TIMESTAMP |  |
 | deleted_at | TIMESTAMP |  |
 
@@ -320,7 +320,7 @@ Pagination via `?page=&limit=`.
 
 | Area | Methods |
 | --- | --- |
-| Auth | `POST /auth/login`, `POST /auth/refresh`, `POST /auth/revoke` |
+| Auth | Authentication handled by Auth0 (see Section 6.1 and api.yml). Backend expects JWT bearer tokens. |
 | Tenant | `GET /tenant`, `PATCH /tenant` |
 | Users | `POST /users`, `GET /users`, `PATCH /users/{id}`, `DELETE /users/{id}` |
 | Employees | CRUD endpoints analogous to Users |

@@ -1,26 +1,29 @@
 # Git Ignore Rules for RSU/ESOP Platform
 
-# Node / Dependency Directories
+# Node.js dependencies
 node_modules/
 
-# Build output
+# Build outputs
 dist/
+build/
+.npm/
+coverage/
+*.log
+.DS_Store
 
 # Environment variables
-.env*
-!.env.example
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
 
-# Log files
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-
-# Editor / OS files
-.DS_Store
-Thumbs.db
+# IDE files
 .idea/
 .vscode/
-*.swp
+
+# Cypress artifacts
+cypress/videos
+cypress/screenshots
 
 # Docker
 !docker-compose.yml # Keep compose file

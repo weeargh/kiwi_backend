@@ -1,0 +1,17 @@
+{
+  "name": "kiwi3",
+  "version": "1.0.0",
+  "description": "This repository contains the source code for the RSU/ESOP management platform specified in `SPECIFICATION.md` and `api.yml`.",
+  "main": "check_env.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "dotenv": "^16.5.0",
+    "knex": "^3.1.0",
+    "pg": "^8.15.6"
+  }
+}

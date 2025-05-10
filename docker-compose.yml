@@ -1,17 +1,20 @@
-version: '3.8'
-
 services:
   postgres:
-    image: postgres:15-alpine # Match spec version
-    container_name: rsu_postgres
+    image: postgres:15 # Ensure this is non-Alpine
+    user: postgres # Explicitly set the user for the container
+    container_name: rsu_postgres_unique_test # Original name
     environment:
-      POSTGRES_USER: ${DB_USER:-user}
+      POSTGRES_USER: uniqueuser123
       POSTGRES_PASSWORD: ${DB_PASSWORD:-password}
-      POSTGRES_DB: ${DB_NAME:-rsu_db}
+      POSTGRES_DB: uniquedb456
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - kiwi3_pgdata_v3_unique:/var/lib/postgresql/data # Original volume name
     ports:
       - "${DB_PORT:-5432}:5432"
+    healthcheck:
+        test: ["CMD-SHELL", "pg_isready -U uniqueuser123 -d uniquedb456 || exit 1"]
+        interval: 5s
+        timeout: 5s
     networks:
       - rsu_network
     restart: unless-stopped
@@ -22,48 +25,59 @@ services:
       dockerfile: Dockerfile
     container_name: rsu_backend
     environment:
-      # Pass database connection details (use service name 'postgres')
-      DATABASE_URL: postgresql://${DB_USER:-user}:${DB_PASSWORD:-password}@postgres:${DB_PORT:-5432}/${DB_NAME:-rsu_db}
+      DATABASE_URL: postgresql://uniqueuser123:${DB_PASSWORD:-password}@postgres:5432/uniquedb456
       BACKEND_PORT: ${BACKEND_PORT:-3001}
-      # Add JWT_SECRET later
-      # JWT_SECRET: ${JWT_SECRET:-YourSecretKey}
+      AUTH0_DOMAIN: ${AUTH0_DOMAIN}
+      AUTH0_AUDIENCE: ${AUTH0_AUDIENCE}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:8080} # For CORS
     volumes:
-      # Mount source code for development (optional, allows hot-reloading)
       - ./backend:/usr/src/app/backend
-      - /usr/src/app/backend/node_modules # Avoid overwriting node_modules
+      - backend_node_modules:/usr/src/app/backend/node_modules 
+      - .env:/usr/src/app/.env
+
     ports:
       - "${BACKEND_PORT:-3001}:3001"
     depends_on:
-      - postgres
+      postgres: 
+        condition: service_healthy
     networks:
       - rsu_network
     restart: unless-stopped
 
   frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
+    image: nginx:alpine
     container_name: rsu_frontend
+    volumes:
+      - ./frontend/dist:/usr/share/nginx/html
+      - ./frontend/nginx.conf:/etc/nginx/conf.d/default.conf
     ports:
-      - "${FRONTEND_PORT:-8080}:80" # Map host port 8080 to container port 80 (nginx default)
+      - "${FRONTEND_PORT:-8080}:80"
     depends_on:
       - backend
     networks:
       - rsu_network
     restart: unless-stopped
-    # For development with hot-reloading (alternative setup):
-    # Instead of building and serving with nginx, mount code and run dev server
-    # command: npm run dev
-    # volumes:
-    #   - ./frontend:/usr/src/app/frontend
-    #   - /usr/src/app/frontend/node_modules
-    # ports:
-    #   - "${FRONTEND_PORT:-8080}:5173" # Vite default port
+
+  migrate:
+    image: node:20-alpine 
+    container_name: rsu_migrate
+    working_dir: /usr/src/app
+    environment:
+      DATABASE_URL: postgresql://uniqueuser123:${DB_PASSWORD:-password}@postgres:5432/uniquedb456
+    volumes:
+      - .:/usr/src/app
+    command: sh -c "cd database && npm install --omit=dev && npm run migrate:latest"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - rsu_network
 
 volumes:
-  postgres_data:
+  kiwi3_pgdata_v3_unique: # Original volume name
     driver: local
+  backend_node_modules: 
 
 networks:
   rsu_network:
-    driver: bridge 
+    driver: bridge

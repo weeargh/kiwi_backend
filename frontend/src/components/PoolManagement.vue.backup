@@ -1,0 +1,945 @@
+<script setup>
+import { ref, onMounted, computed } from 'vue';
+import { useAuth0 } from '@auth0/auth0-vue';
+import poolService from '../services/poolService';
+import ppsService from '../services/ppsService';
+import { ElCard, ElButton, ElTable, ElTableColumn, ElDialog, ElInput, ElInputNumber, ElSelect, ElOption, ElDatePicker, ElNotification } from 'element-plus';
+import { Loading, Plus, Check, CircleClose } from '@element-plus/icons-vue';
+import ErrorDisplay from './ErrorDisplay.vue';
+import authService from '../services/authService';
+import { formatDisplayDecimal, formatPrice, formatISODate } from '../utils/dataUtils';
+
+const { user, getAccessTokenSilently, loginWithRedirect, isAuthenticated } = useAuth0();
+
+// Data for the component
+const loading = ref(true);
+const poolData = ref(null);
+const currentPPS = ref(null);
+const poolEvents = ref([]);
+const totalPoolEvents = ref(0);
+const eventDialog = ref(false);
+const newEvent = ref({
+  amount: null,
+  event_type: null,
+  effective_date: new Date(),
+  notes: ''
+});
+const submitting = ref(false);
+const eventTypes = ref([
+  { label: 'Top Up', value: 'top_up' },
+  { label: 'Reduction', value: 'reduction' }
+]);
+const currentPage = ref(1);
+const rowsPerPage = ref(10);
+
+// PPS Management Data
+const ppsHistory = ref([]);
+const totalPPSEntries = ref(0);
+const ppsDialog = ref(false);
+const newPPS = ref({
+  effective_date: new Date(),
+  price_per_share: null
+});
+const editPPS = ref(null);
+
+// PPS Management Methods
+const fetchPPSHistory = async () => {
+  try {
+    const result = await ppsService.getPPSHistory({
+      page: currentPage.value,
+      limit: rowsPerPage.value
+    });
+    
+    if (result && result.data && result.data.items) {
+      ppsHistory.value = result.data.items;
+      totalPPSEntries.value = result.data.pagination.total_items;
+    } else if (result && result.items) {
+      ppsHistory.value = result.items;
+      totalPPSEntries.value = result.pagination.total_items;
+    } else {
+      console.warn('Received unexpected API response structure:', result);
+      ppsHistory.value = [];
+      totalPPSEntries.value = 0;
+    }
+  } catch (error) {
+    console.error('Error fetching PPS history:', error);
+    ElNotification({
+      title: 'Error',
+      message: `Failed to load PPS history: ${error.message}`,
+      type: 'error',
+      duration: 5000
+    });
+    ppsHistory.value = [];
+    totalPPSEntries.value = 0;
+  }
+};
+
+const onPageChange = (page) => {
+  currentPage.value = page;
+  fetchPPSHistory();
+};
+
+const openNewPPSDialog = () => {
+  newPPS.value = {
+    effective_date: new Date(),
+    price_per_share: null
+  };
+  editPPS.value = null;
+  ppsDialog.value = true;
+};
+
+const openEditPPSDialog = (pps) => {
+  editPPS.value = {
+    pps_id: pps.pps_id,
+    effective_date: new Date(pps.effective_date),
+    price_per_share: parseFloat(pps.price_per_share)
+  };
+  newPPS.value = null;
+  ppsDialog.value = true;
+};
+
+const submitNewPPS = async () => {
+  if (!newPPS.value.price_per_share || !newPPS.value.effective_date) {
+    ElNotification({
+      title: 'Validation Error',
+      message: 'Please fill in all required fields',
+      type: 'error',
+      duration: 5000
+    });
+    return;
+  }
+  
+  submitting.value = true;
+  try {
+    const formattedDate = newPPS.value.effective_date.toISOString().split('T')[0];
+    
+    const ppsData = {
+      effective_date: formattedDate,
+      price_per_share: newPPS.value.price_per_share.toString()
+    };
+    
+    await ppsService.createPPS(ppsData);
+    
+    ElNotification({
+      title: 'Success',
+      message: 'Price Per Share record created successfully',
+      type: 'success',
+      duration: 3000
+    });
+    ppsDialog.value = false;
+    
+    await fetchPPSData();
+  } catch (error) {
+    console.error('Error creating PPS record:', error);
+    ElNotification({
+      title: 'Error',
+      message: `Failed to create PPS record: ${error.message}`,
+      type: 'error',
+      duration: 5000
+    });
+  } finally {
+    submitting.value = false;
+  }
+};
+
+const submitEditPPS = async () => {
+  if (!editPPS.value.price_per_share || !editPPS.value.effective_date) {
+    ElNotification({
+      title: 'Validation Error',
+      message: 'Please fill in all required fields',
+      type: 'error',
+      duration: 5000
+    });
+    return;
+  }
+  
+  submitting.value = true;
+  try {
+    const formattedDate = editPPS.value.effective_date.toISOString().split('T')[0];
+    
+    const ppsData = {
+      effective_date: formattedDate,
+      price_per_share: editPPS.value.price_per_share.toString()
+    };
+    
+    await ppsService.updatePPS(editPPS.value.pps_id, ppsData);
+    
+    ElNotification({
+      title: 'Success',
+      message: 'Price Per Share record updated successfully',
+      type: 'success',
+      duration: 3000
+    });
+    ppsDialog.value = false;
+    
+    await fetchPPSData();
+  } catch (error) {
+    console.error('Error updating PPS record:', error);
+    ElNotification({
+      title: 'Error',
+      message: `Failed to update PPS record: ${error.message}`,
+      type: 'error',
+      duration: 5000
+    });
+  } finally {
+    submitting.value = false;
+  }
+};
+
+const formatPPS = (price) => {
+  return `$${Number(price).toLocaleString(undefined, { minimumFractionDigits: 3, maximumFractionDigits: 3 })}`;
+};
+
+// Update fetchPoolData to include PPS history
+const fetchPoolData = async () => {
+  loading.value = true;
+  authError.value = '';
+  dataError.value = '';
+  
+  try {
+    if (!await ensureAuthenticated()) {
+      console.warn('Authentication check failed when trying to fetch pool data');
+      authError.value = 'You must be logged in to view equity pool data.';
+      loading.value = false;
+      return;
+    }
+
+    const result = await poolService.getPool();
+    
+    if (result && result.data) {
+      poolData.value = result.data;
+    } else if (result) {
+      poolData.value = result;
+    } else {
+      console.warn('Unexpected or empty response from pool service');
+      dataError.value = 'Unable to load equity pool data. The server returned an unexpected response.';
+      poolData.value = null;
+      return;
+    }
+    
+    await fetchPoolEvents();
+    await fetchPPSHistory();
+    
+    try {
+      const ppsResult = await ppsService.getCurrentPPS();
+      if (ppsResult && ppsResult.data) {
+        currentPPS.value = ppsResult.data;
+      } else if (ppsResult) {
+        currentPPS.value = ppsResult;
+      } else {
+        currentPPS.value = null;
+      }
+    } catch (error) {
+      if (error.status === 404) {
+        currentPPS.value = null;
+      } else {
+        console.error('Error fetching current PPS:', error);
+        currentPPS.value = null;
+      }
+    }
+  } catch (error) {
+    console.error('Error fetching pool data:', error);
+    
+    if (error.status === 401 || error.status === 403) {
+      authError.value = 'You do not have permission to view this data. Please ensure you are logged in with the correct account.';
+      handleAuthFailure();
+    } else {
+      dataError.value = `Failed to load equity pool data: ${error.message}`;
+      ElNotification({
+        title: 'Error',
+        message: dataError.value,
+        type: 'error',
+        duration: 5000
+      });
+    }
+    
+    poolData.value = null;
+  } finally {
+    loading.value = false;
+  }
+};
+
+// Add new refs for error handling
+const authError = ref('');
+const dataError = ref('');
+const isRefreshingToken = ref(false);
+
+// Computed properties
+const userIsAdmin = computed(() => {
+  return user.value?.['https://api.domain.com/roles']?.includes('admin');
+});
+
+// Function to check and refresh authentication if needed
+const ensureAuthenticated = async () => {
+  console.log('Checking authentication status...');
+  
+  if (!isAuthenticated.value) {
+    console.warn('User is not authenticated');
+    return false;
+  }
+  
+  try {
+    isRefreshingToken.value = true;
+    console.log('Refreshing auth token...');
+    // Explicitly request a new token with the correct audience
+    const audience = import.meta.env.VITE_AUTH0_AUDIENCE || 'your-auth0-audience';
+    console.log('Using audience value:', audience);
+    const token = await getAccessTokenSilently({
+      audience: audience,
+      cacheMode: 'off' // Force a fresh token
+    });
+    console.log('Successfully refreshed token:', token ? 'Token received' : 'No token received');
+    isRefreshingToken.value = false;
+    return !!token;
+  } catch (error) {
+    console.error('Error refreshing authentication token:', error);
+    isRefreshingToken.value = false;
+    return false;
+  }
+};
+
+const handleAuthFailure = () => {
+  ElNotification({
+    title: 'Authentication Error',
+    message: 'Your session may have expired. Please log in again.',
+    type: 'error',
+    duration: 8000
+  });
+  
+  // Optional: Automatically redirect to login
+  // setTimeout(() => loginWithRedirect(), 2000);
+};
+
+const formattedPoolData = computed(() => {
+  if (!poolData.value) return null;
+  
+  return {
+    initial_amount: formatDisplayDecimal(poolData.value.initial_amount),
+    total_pool: formatDisplayDecimal(poolData.value.total_pool),
+    granted_shares: formatDisplayDecimal(poolData.value.granted_shares),
+    returned_shares: formatDisplayDecimal(poolData.value.returned_shares),
+    available_shares: formatDisplayDecimal(poolData.value.available_shares)
+  };
+});
+
+const formattedPPS = computed(() => {
+  if (!currentPPS.value) return 'Not set';
+  
+  return `${formatPrice(currentPPS.value.price_per_share)} (as of ${new Date(currentPPS.value.effective_date).toLocaleDateString()})`;
+});
+
+// Methods
+      handleAuthFailure();
+    } else {
+      dataError.value = `Failed to load equity pool data: ${error.message}`;
+      ElNotification({
+        title: 'Error',
+        message: dataError.value,
+        type: 'error',
+        duration: 5000
+      });
+    }
+    
+    poolData.value = null;
+  } finally {
+    loading.value = false;
+  }
+};
+
+const fetchPoolEvents = async () => {
+  try {
+    if (!poolData.value) return;
+    
+    const result = await poolService.getPoolEvents(poolData.value.pool_id, {
+      page: currentPage.value,
+      limit: rowsPerPage.value
+    });
+    
+    if (result && result.data && result.data.items) {
+      poolEvents.value = result.data.items;
+      totalPoolEvents.value = result.data.pagination.total_items;
+    } else if (result && result.items) {
+      poolEvents.value = result.items;
+      totalPoolEvents.value = result.pagination.total_items;
+    } else {
+      // Initialize with empty array if no valid data structure
+      console.warn('Received unexpected API response structure:', result);
+      poolEvents.value = [];
+      totalPoolEvents.value = 0;
+    }
+  } catch (error) {
+    console.error('Error fetching pool events:', error);
+    ElNotification({
+      title: 'Error',
+      message: `Failed to load pool events: ${error.message}`,
+      type: 'error',
+      duration: 5000
+    });
+    // Initialize with empty arrays on error
+    poolEvents.value = [];
+    totalPoolEvents.value = 0;
+  }
+};
+
+const onPageChange = (page) => {
+  currentPage.value = page;
+  fetchPoolEvents();
+};
+
+const openNewEventDialog = () => {
+  newEvent.value = {
+    amount: null,
+    event_type: null,
+    effective_date: new Date(),
+    notes: ''
+  };
+  eventDialog.value = true;
+};
+
+const submitNewEvent = async () => {
+  // Validate form inputs
+  if (!newEvent.value.amount || !newEvent.value.event_type || !newEvent.value.effective_date) {
+    ElNotification({
+      title: 'Validation Error',
+      message: 'Please fill in all required fields',
+      type: 'error',
+      duration: 5000
+    });
+    return;
+  }
+  
+  submitting.value = true;
+  try {
+    // Ensure we have valid authentication before proceeding
+    if (!await ensureAuthenticated()) {
+      ElNotification({
+        title: 'Authentication Error',
+        message: 'You need to be logged in as an admin to create pool events.',
+        type: 'error',
+        duration: 5000
+      });
+      submitting.value = false;
+      return;
+    }
+    
+    // Format the date to YYYY-MM-DD using utility function
+    const formattedDate = formatISODate(newEvent.value.effective_date);
+    
+    // Handle amount sign based on event type according to specification
+    // Amount should be positive for top_up, negative for reduction
+    let amount = Math.abs(newEvent.value.amount);
+    if (newEvent.value.event_type === 'reduction') {
+      amount = -amount; // Make negative for reductions
+    }
+    
+    const eventData = {
+      amount: amount.toFixed(3), // Ensure 3 decimal places as per specification
+      event_type: newEvent.value.event_type,
+      effective_date: formattedDate,
+      notes: newEvent.value.notes
+    };
+    
+    console.log('Creating pool event with data:', eventData);
+    await poolService.createPoolEvent(poolData.value.pool_id, eventData);
+    
+    ElNotification({
+      title: 'Success',
+      message: 'Pool event created successfully',
+      type: 'success',
+      duration: 3000
+    });
+    eventDialog.value = false;
+    
+    // Refresh data
+    await fetchPoolData();
+  } catch (error) {
+    console.error('Error creating pool event:', error);
+    
+    // Improved error handling with specific messages
+    let errorMessage = 'Failed to create pool event';
+    
+    if (error.status === 401) {
+      errorMessage = 'Authentication error: You must be logged in with admin privileges';
+      handleAuthFailure();
+    } else if (error.status === 400) {
+      // Handle validation errors
+      errorMessage = 'Invalid input: ' + (error.data?.error?.message || 'Please check your inputs');
+    } else if (error.status === 403) {
+      errorMessage = 'You do not have permission to create pool events. Admin access is required.';
+    } else if (error.status === 409) {
+      errorMessage = 'Conflict: The operation would result in negative available shares';
+    } else {
+      errorMessage += ': ' + (error.message || 'Unknown error');
+    }
+    
+    ElNotification({
+      title: 'Error',
+      message: errorMessage,
+      type: 'error',
+      duration: 5000
+    });
+  } finally {
+    submitting.value = false;
+  }
+};
+
+const setInitialPPS = async () => {
+  try {
+    const ppsData = {
+      effective_date: new Date().toISOString().split('T')[0],
+      price_per_share: '1.000'
+    };
+    
+    await ppsService.createPPS(ppsData);
+    ElNotification({
+      title: 'Success',
+      message: 'Initial Price Per Share set successfully',
+      type: 'success',
+      duration: 3000
+    });
+    
+    // Refresh the PPS data
+    const ppsResult = await ppsService.getCurrentPPS();
+    if (ppsResult && ppsResult.data) {
+      currentPPS.value = ppsResult.data;
+    } else if (ppsResult) {
+      currentPPS.value = ppsResult;
+    } else {
+      currentPPS.value = null;
+    }
+  } catch (error) {
+    console.error('Error setting initial PPS:', error);
+    ElNotification({
+      title: 'Error',
+      message: 'Failed to set initial Price Per Share',
+      type: 'error',
+      duration: 5000
+    });
+  }
+};
+
+const formatAmount = (amount) => {
+  return formatDisplayDecimal(amount);
+};
+
+const formatEventType = (eventType) => {
+  switch (eventType) {
+    case 'initial': return 'Initial Allocation';
+    case 'top_up': return 'Top Up';
+    case 'reduction': return 'Reduction';
+    default: return eventType;
+  }
+};
+
+// Initialize component
+onMounted(async () => {
+  await fetchPoolData();
+});
+</script>
+
+<template>
+  <div class="pool-management">
+    <h2>Equity Pool Management</h2>
+    
+    <!-- Authentication error message -->
+    <ErrorDisplay 
+      v-if="authError" 
+      severity="auth" 
+      title="Authentication Required" 
+      :message="authError" 
+      :dismissible="false" 
+    />
+    
+    <!-- Data error message -->
+    <ErrorDisplay 
+      v-if="dataError" 
+      severity="error" 
+      title="Data Loading Error" 
+      :message="dataError" 
+    />
+    
+    <div v-if="loading" class="loading-container">
+      <el-icon class="is-loading"><Loading /></el-icon>
+      <p>Loading pool data...</p>
+    </div>
+    
+    <div v-else-if="!poolData" class="text-center">
+      <p>No equity pool found for this tenant. Please contact your administrator.</p>
+    </div>
+    
+    <div v-else class="pool-content">
+      <!-- Pool summary card -->
+      <el-card class="pool-summary mb-4">
+        <template #header>
+          <div>
+            <div class="card-title">Equity Pool Overview</div>
+            <div class="card-subtitle">Current metrics for your equity pool</div>
+          </div>
+        </template>
+        
+        <div class="pool-metrics">
+          <div class="metric-row">
+            <div class="metric">
+              <label>Total Pool:</label>
+              <div class="value">{{ formattedPoolData.total_pool }}</div>
+            </div>
+            <div class="metric">
+              <label>Initial Allocation:</label>
+              <div class="value">{{ formattedPoolData.initial_amount }}</div>
+            </div>
+          </div>
+          
+          <div class="metric-row">
+            <div class="metric">
+              <label>Granted Shares:</label>
+              <div class="value">{{ formattedPoolData.granted_shares }}</div>
+            </div>
+            <div class="metric">
+              <label>Available Shares:</label>
+              <div class="value highlight">{{ formattedPoolData.available_shares }}</div>
+            </div>
+          </div>
+          
+          <div class="metric-row">
+            <div class="metric">
+              <label>Current Price Per Share:</label>
+              <div class="value">{{ formattedPPS }}</div>
+            </div>
+            <div class="metric">
+              <label>Returned Shares:</label>
+              <div class="value">{{ formattedPoolData.returned_shares }}</div>
+            </div>
+          </div>
+        </div>
+        
+        <template #footer>
+          <el-button v-if="userIsAdmin" @click="openNewEventDialog" type="primary" plain>
+            <el-icon class="el-icon--left"><Plus /></el-icon> Add Top-Up or Reduction
+          </el-button>
+        </template>
+      </el-card>
+      
+      <!-- Pool events table -->
+      <el-card class="pool-events mb-4">
+        <template #header>
+          <div>
+            <div class="card-title">Pool Event History</div>
+            <div class="card-subtitle">Record of all changes to the equity pool</div>
+          </div>
+        </template>
+        
+        <el-table :data="poolEvents" stripe style="width: 100%">
+          <el-table-column prop="effective_date" label="Effective Date">
+            <template #default="scope">
+              {{ new Date(scope.row.effective_date).toLocaleDateString() }}
+            </template>
+          </el-table-column>
+          <el-table-column prop="event_type" label="Type">
+            <template #default="scope">
+              {{ formatEventType(scope.row.event_type) }}
+            </template>
+          </el-table-column>
+          <el-table-column prop="amount" label="Amount">
+            <template #default="scope">
+              <span :class="{'negative-amount': scope.row.amount < 0}">
+                {{ formatAmount(scope.row.amount) }}
+              </span>
+            </template>
+          </el-table-column>
+          <el-table-column prop="notes" label="Notes" />
+          <el-table-column prop="created_at" label="Created At" width="200">
+            <template #default="{ row }">
+              {{ new Date(row.created_at).toLocaleString() }}
+            </template>
+          </el-table-column>
+          <el-table-column v-if="userIsAdmin.value" label="Actions" width="120">
+            <template #default="{ row }">
+              <el-button type="primary" link @click="openEditPPSDialog(row)" :disabled="submitting.value">
+                Edit
+              </el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+        
+        <div class="pagination-container">
+          <el-pagination
+            v-model:currentPage="currentPage"
+            :page-size="rowsPerPage"
+            :total="totalPoolEvents"
+            layout="total, prev, pager, next"
+            @current-change="onPageChange"
+          />
+        </div>
+      </el-card>
+    </div>
+    
+    <!-- Dialog for adding new events -->
+    <el-dialog
+      v-model="eventDialog"
+      title="Add Pool Event"
+      width="450px"
+      :close-on-click-modal="!submitting.value"
+      :close-on-press-escape="!submitting.value"
+    >
+      <div class="form-field mb-3">
+        <label for="event-type">Event Type</label>
+        <el-select
+          id="event-type"
+          v-model="newEvent.event_type"
+          placeholder="Select event type"
+          style="width: 100%"
+          :disabled="!userIsAdmin.value"
+        >
+          <el-option
+            v-for="type in eventTypes"
+            :key="type.value"
+            :label="type.label"
+            :value="type.value"
+          />
+        </el-select>
+      </div>
+
+      <!-- Button to set initial PPS if not set -->
+      <div v-if="!currentPPS.value && userIsAdmin.value" class="form-field mb-3">
+        <el-button type="primary" @click="setInitialPPS">
+          Set Initial Price Per Share
+        </el-button>
+      </div>
+      
+      <div class="form-field mb-3">
+        <label for="amount">Amount</label>
+        <el-input-number
+          id="amount"
+          v-model="newEvent.amount"
+          :min="0.001"
+          :precision="3"
+          placeholder="Enter Amount"
+          :disabled="submitting.value"
+          style="width: 100%"
+        />
+      </div>
+      
+      <div class="form-field mb-3">
+        <label for="effective-date">Effective Date</label>
+        <el-date-picker
+          id="effective-date"
+          v-model="newEvent.effective_date"
+          type="date"
+          placeholder="YYYY-MM-DD"
+          format="YYYY-MM-DD"
+          :disabled="submitting.value"
+          style="width: 100%"
+        />
+      </div>
+      
+      <div class="form-field mb-3">
+        <label for="notes">Notes</label>
+        <el-input
+          id="notes"
+          v-model="newEvent.notes"
+          type="textarea"
+          :rows="3"
+          placeholder="Optional notes about this change"
+          :disabled="submitting.value"
+        />
+      </div>
+      
+      <template #footer>
+        <span class="dialog-footer">
+          <el-button @click="eventDialog = false" :disabled="submitting.value">
+            <el-icon class="el-icon--left"><CircleClose /></el-icon> Cancel
+          </el-button>
+          <el-button type="primary" @click="submitNewEvent" :loading="submitting.value">
+            <el-icon class="el-icon--left"><Check /></el-icon> Save
+          </el-button>
+        </span>
+      </template>
+    </el-dialog>
+    
+    <!-- Dialog for editing PPS -->
+    <el-dialog
+      v-model="ppsDialog"
+      title="Edit Price Per Share"
+      width="450px"
+      :close-on-click-modal="!submitting.value"
+      :close-on-press-escape="!submitting.value"
+    >
+      <el-form
+        :model="editPPS || newPPS"
+        :rules="ppsRules"
+        ref="ppsForm"
+        label-width="120px"
+      >
+        <div class="form-field mb-3">
+          <label for="price-per-share">Price Per Share</label>
+          <el-input-number
+            id="price-per-share"
+            v-model="editPPS.price_per_share"
+            :min="0.001"
+            :precision="3"
+            placeholder="Enter Price Per Share"
+            :disabled="submitting.value"
+            style="width: 100%"
+          />
+        </div>
+        
+        <div class="form-field mb-3">
+          <label for="effective-date">Effective Date</label>
+          <el-date-picker
+            id="effective-date"
+            v-model="editPPS.effective_date"
+            type="date"
+            placeholder="YYYY-MM-DD"
+            format="YYYY-MM-DD"
+            :disabled="submitting.value"
+            style="width: 100%"
+          />
+        </div>
+        
+        <div class="form-field mb-3">
+          <label for="notes">Notes</label>
+          <el-input
+            id="notes"
+            v-model="editPPS.notes"
+            type="textarea"
+            :rows="3"
+            placeholder="Optional notes about this change"
+            :disabled="submitting.value"
+          />
+        </div>
+      </el-form>
+      
+      <template #footer>
+        <span class="dialog-footer">
+          <el-button @click="ppsDialog = false">
+            Cancel
+          </el-button>
+          <el-button
+            type="primary"
+            @click="editPPS ? submitEditPPS() : submitNewPPS()"
+            :loading="submitting.value"
+            :disabled="!userIsAdmin.value"
+          >
+            {{ editPPS ? 'Update' : 'Create' }}
+          </el-button>
+        </span>
+      </template>
+    </el-dialog>
+  </div>
+</template>
+
+<style scoped>
+.pool-management {
+  padding: 0 1rem 1rem 1rem; /* Removed top padding */
+}
+
+.pool-management > h2 { /* Target the direct h2 child for page title styling */
+  margin-top: 0;
+  margin-bottom: 1.5rem; /* Space before the first card */
+  font-size: 1.75rem; /* Consistent with Dashboard's h1 if desired, or keep as h2 default */
+}
+
+.mb-4 {
+  margin-bottom: 1rem;
+}
+
+.mb-3 {
+  margin-bottom: 0.75rem;
+}
+
+.text-center {
+  text-align: center;
+}
+
+.loading-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 200px;
+}
+
+.loading-container .el-icon {
+  font-size: 2rem;
+  color: var(--el-color-primary);
+  margin-bottom: 1rem;
+}
+
+.card-title {
+  font-weight: bold;
+  font-size: 1.1rem;
+}
+
+.card-subtitle {
+  color: var(--el-text-color-secondary);
+  font-size: 0.9rem;
+}
+
+.pool-metrics {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.metric-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 2rem;
+}
+
+.metric {
+  flex: 1;
+  border: 1px solid var(--el-border-color);
+  border-radius: 6px;
+  padding: 0.75rem;
+  background-color: #f5f7fa;
+}
+
+.metric label {
+  display: block;
+  font-size: 0.875rem;
+  color: var(--el-text-color-secondary);
+  margin-bottom: 0.25rem;
+}
+
+.metric .value {
+  font-size: 1.25rem;
+  font-weight: 700;
+}
+
+.metric .highlight {
+  color: var(--el-color-primary);
+}
+
+.negative-amount {
+  color: var(--el-color-danger);
+}
+
+.pagination-container {
+  margin-top: 1rem;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.form-field {
+  margin-bottom: 1rem;
+}
+
+.form-field label {
+  display: block;
+  margin-bottom: 0.5rem;
+  font-weight: bold;
+}
+
+.dialog-footer {
+  display: flex;
+  justify-content: flex-end;
+}
+
+@media (max-width: 768px) {
+  .metric-row {
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+}
+</style>
